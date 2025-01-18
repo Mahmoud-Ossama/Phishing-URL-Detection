@@ -1,0 +1,189 @@
+:root {
+    --dark-blue: #041c1a;    /* Added green tint to dark blue */
+    --accent-blue: #0a5d6e;  /* More cyan-green */
+    --cyan: #00ffd5;         /* Added green tint to cyan */
+    --light-blue: #4ae2c2;   /* More aqua color */
+    --neon-green: #39ff9c;   /* New neon green for accents */
+    --section-spacing: 2.5rem;
+    --border-radius: 15px;
+    --container-width: 1000px;
+}
+
+body {
+    background-color: var(--dark-blue);
+    background-image: 
+        /* Diagonal lines pattern */
+        linear-gradient(45deg, transparent 48%, rgba(74, 226, 194, 0.15) 48%, rgba(74, 226, 194, 0.15) 52%, transparent 52%),
+        linear-gradient(-45deg, transparent 48%, rgba(74, 226, 194, 0.15) 48%, rgba(74, 226, 194, 0.15) 52%, transparent 52%),
+        /* Subtle radial gradient for depth */
+        radial-gradient(circle at 50% 50%, var(--accent-blue) 0%, var(--dark-blue) 100%);
+    background-size: 60px 60px, 60px 60px, 100% 100%;
+    background-position: 0 0, 0 0, 0 0;
+    background-repeat: repeat, repeat, no-repeat;
+    position: relative;
+    min-height: 100vh;
+    padding: var(--section-spacing);
+}
+
+body::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: 
+        linear-gradient(120deg, transparent 75%, rgba(0, 255, 213, 0.1) 75%),
+        linear-gradient(210deg, transparent 75%, rgba(57, 255, 156, 0.1) 75%);
+    background-size: 100px 100px;
+    pointer-events: none;
+}
+
+.container {
+    max-width: var(--container-width);
+    background: rgba(255, 255, 255, 0.92);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(74, 226, 194, 0.1);
+    border-radius: var(--border-radius);
+    padding: calc(var(--section-spacing) * 1.5);
+    margin: 2rem auto;
+    box-shadow: 0 0 30px rgba(0, 0, 0, 0.2);
+}
+
+.brand-header {
+    margin-bottom: calc(var(--section-spacing) * 1.5);
+    padding-bottom: var(--section-spacing);
+    border-bottom: 1px solid rgba(74, 226, 194, 0.2);
+}
+
+.brand-header i {
+    font-size: 3.5rem;
+    margin-bottom: 1.5rem;
+    color: var(--accent-blue) !important;
+    text-shadow: 0 0 15px rgba(57, 255, 156, 0.3);
+}
+
+.brand-header h1 {
+    font-size: 2.5rem;
+    font-weight: 600;
+    margin-bottom: 1rem;
+    color: var(--accent-blue);
+}
+
+.url-input {
+    padding: 1rem 1.5rem;
+    font-size: 1.1rem;
+    border-radius: calc(var(--border-radius) / 2);
+    border: 2px solid rgba(74, 226, 194, 0.2);
+    transition: all 0.3s ease;
+}
+
+.submit-btn {
+    background-color: var(--accent-blue);
+    border-color: var(--accent-blue);
+    box-shadow: 0 0 15px rgba(74, 226, 194, 0.3);
+    padding: 1rem 2.5rem;
+    font-size: 1.1rem;
+    border-radius: calc(var(--border-radius) / 2);
+    transition: all 0.3s ease;
+    margin-top: 1.5rem;
+}
+
+.submit-btn:hover {
+    background-color: var(--dark-blue);
+    border-color: var(--accent-blue);
+    box-shadow: 0 0 20px rgba(57, 255, 156, 0.4);
+}
+
+.url-input:focus {
+    border-color: var(--accent-blue);
+    box-shadow: 0 0 0 0.2rem rgba(74, 226, 194, 0.25);
+}
+
+.model-result {
+    background: rgba(255, 255, 255, 0.7);
+    border-radius: var(--border-radius);
+    padding: calc(var(--section-spacing) * 1.2);
+    margin-bottom: var(--section-spacing);
+    border: 1px solid rgba(74, 226, 194, 0.2);
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.05);
+}
+
+.url-display {
+    background: rgba(74, 226, 194, 0.1);
+    padding: 1.25rem;
+    border-radius: var(--border-radius);
+    margin-bottom: var(--section-spacing);
+    border: 1px solid rgba(74, 226, 194, 0.2);
+    word-break: break-all;
+}
+
+.prediction-badge {
+    display: inline-block;
+    padding: 0.75rem 1.5rem;
+    border-radius: 2rem;
+    font-weight: 600;
+    font-size: 1.1rem;
+    margin: 1rem 0;
+}
+
+.legitimate {
+    background-color: rgba(57, 255, 156, 0.2);
+    color: #0a5d6e;
+    border: 1px solid rgba(57, 255, 156, 0.4);
+}
+
+.phishing {
+    background-color: rgba(255, 99, 132, 0.2);
+    color: #721c24;
+    border: 1px solid rgba(255, 99, 132, 0.4);
+}
+
+.confidence-bar {
+    height: 8px;
+    border-radius: 4px;
+    margin: 1rem 0;
+    background: rgba(74, 226, 194, 0.1);
+}
+
+.back-btn {
+    margin-top: calc(var(--section-spacing) * 1.5);
+    padding: 1rem 2.5rem;
+    font-size: 1.1rem;
+    border-radius: calc(var(--border-radius) / 2);
+}
+
+.info-text {
+    margin-top: var(--section-spacing);
+    padding-top: var(--section-spacing);
+    border-top: 1px solid rgba(74, 226, 194, 0.2);
+    color: var(--accent-blue);
+    font-size: 1.1rem;
+}
+
+@media (max-width: 768px) {
+    :root {
+        --section-spacing: 1.5rem;
+    }
+    
+    body {
+        background-size: 40px 40px, 40px 40px, 100% 100%;
+    }
+    
+    .container {
+        padding: var(--section-spacing);
+        margin: 1rem;
+    }
+    
+    .row {
+        margin: 0;
+    }
+    
+    .col-md-6 {
+        padding: 0;
+    }
+    
+    .model-result {
+        margin-bottom: var(--section-spacing);
+    }
+}

@@ -1,5 +1,5 @@
 from sklearn.ensemble import RandomForestClassifier
-from .base_detector import BaseDetector  # Use relative import
+from .base_detector import BaseDetector  # Changed to relative import
 
 class RandomForestDetector(BaseDetector):
     def __init__(self):

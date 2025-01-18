@@ -4,9 +4,9 @@ import os
 import sys
 from sklearn.model_selection import train_test_split  # Add this import
 
-from .url_features import URLFeatureExtractor
-from .random_forest_detector import RandomForestDetector
-from .xgboost_detector import XGBoostDetector
+from url_features import URLFeatureExtractor
+from random_forest_detector import RandomForestDetector
+from xgboost_detector import XGBoostDetector
 
 def ensure_dir(directory):
     if not os.path.exists(directory):
@@ -85,7 +85,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-# CORRECT - use # for Python comments
-
-# WRONG - don't use // for Python
