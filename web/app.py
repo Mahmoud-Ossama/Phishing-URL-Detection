@@ -659,14 +659,20 @@ def start_ngrok(port):
     return public_url
 
 if __name__ == '__main__':
+    # Check if this is a production environment (Railway sets PORT env var)
+    is_production = os.environ.get('RAILWAY_ENVIRONMENT') == 'production'
+    
+    # If we're in production, disable debug mode
+    debug_mode = not is_production
+    
     # Check if ngrok should be used (from environment variable)
     use_ngrok = os.environ.get('USE_NGROK', 'False').lower() == 'true'
     port = int(os.environ.get('PORT', 5000))
     
-    # Set up a public URL using ngrok
+    # Set up a public URL using ngrok (only in development)
     public_url = None
     
-    if use_ngrok:
+    if use_ngrok and not is_production:
         try:
             # Only import pyngrok if needed
             from pyngrok import ngrok
@@ -684,4 +690,4 @@ if __name__ == '__main__':
             logger.error("Running without ngrok")
     
     # Run the Flask app
-    app.run(host='0.0.0.0', port=port, debug=True)
+    app.run(host='0.0.0.0', port=port, debug=debug_mode)

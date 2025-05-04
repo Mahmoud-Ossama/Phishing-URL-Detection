@@ -1,0 +1,13 @@
+[build]
+builder = "nixpacks"
+buildCommand = "pip install -r requirements.txt"
+
+[deploy]
+startCommand = "python web/app.py"
+healthcheckPath = "/"
+healthcheckTimeout = 100
+restartPolicyType = "on-failure"
+
+[environments]
+PORT = "5000"
+USE_NGROK = "False"
