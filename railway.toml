@@ -8,6 +8,8 @@ healthcheckPath = "/"
 healthcheckTimeout = 100
 restartPolicyType = "on-failure"
 
-[environments]
+# Environment variables should be under deploy.env section
+[deploy.env]
 PORT = "5000"
-USE_NGROK = "False"
+USE_NGROK = "false"
+RAILWAY_ENVIRONMENT = "production"
