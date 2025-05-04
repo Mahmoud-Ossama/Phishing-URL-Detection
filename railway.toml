@@ -6,7 +6,6 @@ buildCommand = "pip install -r requirements.txt"
 startCommand = "python web/app.py"
 healthcheckPath = "/"
 healthcheckTimeout = 100
-restartPolicyType = "on-failure"
 
 # Environment variables should be under deploy.env section
 [deploy.env]
