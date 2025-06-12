@@ -250,14 +250,14 @@ def get_ip_info(url):
             obj = IPWhois(ip_address)
             data = obj.lookup_rdap(depth=1)
             result['service'] = 'ipwhois'
-            result['asn'] = data.get('asn')
-            result['asn_description'] = data.get('asn_description')
-            result['country'] = data.get('asn_country_code')
+            result['asn'] = str(data.get('asn')) if data.get('asn') is not None else ''
+            result['asn_description'] = str(data.get('asn_description')) if data.get('asn_description') is not None else ''
+            result['country'] = str(data.get('asn_country_code')) if data.get('asn_country_code') is not None else ''
             
             # Try to get network information
             network = data.get('network', {})
             if network:
-                result['network_name'] = network.get('name')
+                result['network_name'] = str(network.get('name')) if network.get('name') is not None else ''
                 result['network_range'] = f"{network.get('start_address')} - {network.get('end_address')}"
             
             return {
@@ -313,6 +313,8 @@ def get_ssl_info(url):
             with context.wrap_socket(sock, server_hostname=domain) as ssock:
                 # Get certificate in DER format
                 der_cert = ssock.getpeercert(True)
+                if der_cert is None:
+                    raise ValueError("Failed to retrieve DER certificate from server.")
                 # Convert to OpenSSL certificate
                 x509_cert = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_ASN1, der_cert)
                 # Load with cryptography for more detailed analysis
@@ -326,10 +328,8 @@ def get_ssl_info(url):
                 result['issuer'] = dict(x509_cert.get_issuer().get_components())
                 
                 # Convert byte strings to regular strings
-                for key in result['subject']:
-                    result['subject'][key.decode('utf-8')] = result['subject'].pop(key).decode('utf-8')
-                for key in result['issuer']:
-                    result['issuer'][key.decode('utf-8')] = result['issuer'].pop(key).decode('utf-8')
+                result['subject'] = {key.decode('utf-8'): value.decode('utf-8') for key, value in result['subject'].items()}
+                result['issuer'] = {key.decode('utf-8'): value.decode('utf-8') for key, value in result['issuer'].items()}
                 
                 # Get certificate validity
                 not_before = cert.not_valid_before
@@ -337,7 +337,7 @@ def get_ssl_info(url):
                 
                 result['valid_from'] = not_before.strftime('%Y-%m-%d')
                 result['valid_until'] = not_after.strftime('%Y-%m-%d')
-                result['days_left'] = (not_after - datetime.datetime.now()).days
+                result['days_left'] = (not_after - datetime.now()).days
                 
                 # Get common name
                 try:
@@ -375,7 +375,7 @@ def get_ssl_info(url):
                 result['domain_validated'] = domain_validated
                 
                 # Certificate status
-                now = datetime.datetime.now()
+                now = datetime.now()
                 if now < not_before:
                     result['status'] = 'not_yet_valid'
                 elif now > not_after:
