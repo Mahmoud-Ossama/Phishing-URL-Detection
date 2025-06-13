@@ -2,29 +2,229 @@
 <html>
 <head>
     <title>Analysis Result</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
+    <style>
+        .main-result {
+            border-left: 5px solid;
+            font-size: 1.1em;
+        }
+        .main-result.alert-success {
+            border-left-color: #28a745;
+        }
+        .main-result.alert-danger {
+            border-left-color: #dc3545;
+        }
+        .risk-meter {
+            min-width: 200px;
+        }
+        .accordion-button {
+            font-weight: 600;
+        }        .model-result {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+        .suspicious-level {
+            color: #ff9800;
+            font-weight: bold;
+        }
+        .suspicious-background {
+            background-color: #fff3cd;
+            border-color: #ffeaa7;
+        }
+    </style>
 </head>
 <body>
     <div class="container">
         <h1 class="mb-4 text-center">Analysis Result</h1>
         
+        <!-- Flash Messages -->
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div class="mb-4">
+                    {% for category, message in messages %}
+                        <div class="alert alert-{{ 'danger' if category == 'error' else 'warning' if category == 'warning' else 'success' }} alert-dismissible fade show">
+                            {{ message }}
+                            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+
         <div class="url-display">
             <i class="fas fa-link me-2"></i>
             <strong>Analyzed URL:</strong> {{ result.url }}
         </div>
 
-        <div class="row">
-            <div class="col-md-6">
+        <!-- Combined ML Detection Result (Main Result) -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="alert {% if result.ml_combined.prediction == 'Phishing' %}alert-danger{% elif result.ml_combined.risk_level == 'Suspicious' %}alert-warning suspicious-background{% else %}alert-success{% endif %} main-result">
+                    <div class="d-flex align-items-center justify-content-between">
+                        <div>
+                            <h3 class="mb-2">
+                                <i class="fas {{ 'fa-shield-alt' if result.ml_combined.prediction == 'Legitimate' else 'fa-exclamation-triangle' }} me-2"></i>
+                                ML Detection Result: {{ result.ml_combined.prediction }}
+                            </h3>
+                            <h5 class="mb-2 {% if result.ml_combined.risk_level == 'Suspicious' %}suspicious-level{% endif %}">Risk Level: {{ result.ml_combined.risk_level }}</h5>
+                            <p class="mb-0">
+                                <strong>Confidence:</strong> {{ "%.1f"|format(result.ml_combined.confidence * 100) }}% | 
+                                <strong>Phishing Risk Score:</strong> {{ "%.1f"|format(result.ml_combined.probability * 100) }}%
+                            </p>
+                        </div>
+                        <div class="text-end">
+                            <div class="risk-meter">                                <div class="progress" style="height: 20px; width: 200px;">
+                                    <div class="progress-bar {% if result.ml_combined.prediction == 'Phishing' %}bg-danger{% elif result.ml_combined.risk_level == 'Suspicious' %}bg-warning{% else %}bg-success{% endif %}"
+                                        role="progressbar" 
+                                        style="width: {{ '%.1f'|format(result.ml_combined.probability * 100) }}%">
+                                        {{ "%.1f"|format(result.ml_combined.probability * 100) }}%
+                                    </div>
+                                </div>
+                                <small class="text-muted mt-1 d-block">Weighted Combination: Ensemble (50%), Random Forest (30%), Adaptive (12%), Typosquatting (8%)</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Red Flag and Action Buttons -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-body">
+                        <h6 class="card-title">
+                            <i class="fas fa-tools me-2"></i>
+                            Community Actions
+                        </h6>                        <div class="d-flex flex-wrap gap-2 align-items-center">                            <!-- Red Flag Button -->
+                            <button type="button" class="btn btn-outline-danger" onclick="alert('Button clicked!'); showRedFlagModal();">
+                                <i class="fas fa-flag me-2"></i>
+                                Flag as Suspicious
+                            </button>
+                            
+                            <!-- View Red Flags Button -->
+                            <a href="{{ url_for('view_red_flags') }}" class="btn btn-outline-info">
+                                <i class="fas fa-list me-2"></i>
+                                View Red Flags
+                            </a>
+                            
+                            <!-- Re-analyze Button -->
+                            <form method="POST" action="{{ url_for('predict') }}" class="d-inline">
+                                <input type="hidden" name="url" value="{{ result.url }}">
+                                <button type="submit" class="btn btn-outline-primary">
+                                    <i class="fas fa-redo me-2"></i>
+                                    Re-analyze
+                                </button>
+                            </form>
+                            
+                            <!-- Help Icon with Tooltip -->
+                            <i class="fas fa-info-circle text-muted ms-2" 
+                               data-bs-toggle="tooltip" 
+                               data-bs-placement="top" 
+                               title="Help the community by flagging suspicious URLs that our detection might have missed."
+                               style="cursor: help;"></i>
+                        </div>
+        
+                    </div>
+                </div>
+            </div>
+        </div>        <!-- Red Flag Modal -->
+        <div class="modal fade" id="redFlagModal" tabindex="-1" aria-labelledby="redFlagModalLabel" aria-hidden="true">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="redFlagModalLabel">
+                            <i class="fas fa-flag text-danger me-2"></i>
+                            Flag URL as Suspicious
+                        </h5>
+                        <button type="button" class="btn-close" onclick="hideRedFlagModal()" aria-label="Close"></button>
+                    </div>
+                    <form method="POST" action="{{ url_for('flag_url') }}">
+                        <div class="modal-body">
+                            <div class="alert alert-warning">
+                                <i class="fas fa-exclamation-triangle me-2"></i>
+                                <strong>Are you sure?</strong> This will mark the URL as suspicious in our community database.
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label class="form-label"><strong>URL to Flag:</strong></label>
+                                <input type="text" class="form-control" value="{{ result.url }}" readonly>
+                                <input type="hidden" name="url" value="{{ result.url }}">
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label for="notes" class="form-label">Notes (Optional):</label>
+                                <textarea class="form-control" id="notes" name="notes" rows="3" 
+                                          placeholder="Why do you think this URL is suspicious? (e.g., suspicious content, phishing attempt, malware, etc.)"></textarea>
+                                <small class="form-text text-muted">Your notes will help other users understand the threat.</small>
+                            </div>
+                        </div>                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" onclick="hideRedFlagModal()">Cancel</button>
+                            <button type="submit" class="btn btn-danger">
+                                <i class="fas fa-flag me-2"></i>
+                                Flag as Suspicious
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Individual Model Results (Collapsible Details) -->
+        <div class="accordion mb-4" id="modelAccordion">
+            <div class="accordion-item">
+                <h2 class="accordion-header" id="headingModels">                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseModels">
+                        <i class="fas fa-cogs me-2"></i>
+                        View Model Details
+                        <i class="fas fa-info-circle text-muted ms-2" 
+                           data-bs-toggle="tooltip" 
+                           data-bs-placement="top" 
+                           title="Individual model results: Ensemble (50%), Random Forest (30%), Adaptive (12%), Typosquatting (8%)"
+                           style="cursor: help;"></i>
+                    </button>
+                </h2>
+                <div id="collapseModels" class="accordion-collapse collapse" data-bs-parent="#modelAccordion">                    <div class="accordion-body">
+        
+        <!-- Model Results in Order of Importance/Weight -->
+        
+        <!-- 1. Ensemble Model (45% weight) - Primary Model -->
+        {% if result.ensemble.available %}
+        <div class="row mb-3">
+            <div class="col-12">
+                <div class="model-result border-primary" style="border-left: 4px solid #0d6efd !important;">
+                    <h5><i class="fas fa-layer-group me-2 text-primary"></i>Ensemble Model <span class="badge bg-primary ms-2">Primary - 50% Weight</span></h5>
+                    <div class="mt-3">
+                        <span class="prediction-badge {{ 'legitimate' if result.ensemble.prediction == 'Legitimate' else 'phishing' }}">
+                            {{ result.ensemble.prediction }}
+                        </span>
+                    </div>
+                    <p class="mt-3 mb-2">Phishing Risk Score:</p>
+                    <div class="progress confidence-bar">
+                        <div class="progress-bar {{ 'bg-success' if result.ensemble.prediction == 'Legitimate' else 'bg-danger' }}"
+                            role="progressbar" 
+                             style="width: {{ '%.2f'|format(result.ensemble.probability * 100) }}%">
+                        </div>
+                    </div>
+                    <small class="text-muted">{{ "%.2f"|format(result.ensemble.probability * 100) }}% risk of being phishing</small>
+                    <br><small class="text-primary"><i class="fas fa-info-circle me-1"></i>This model combines multiple algorithms for highest accuracy</small>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- 2. Random Forest Model (30% weight) -->
+        <div class="row mb-3">
+            <div class="col-12">
                 <div class="model-result">
-                    <h5><i class="fas fa-random me-2"></i>Random Forest Model</h5>
+                    <h5><i class="fas fa-random me-2"></i>Random Forest Model <span class="badge bg-secondary ms-2">25% Weight</span></h5>
                     <div class="mt-3">
                         <span class="prediction-badge {{ 'legitimate' if result.random_forest.prediction == 'Legitimate' else 'phishing' }}">
                             {{ result.random_forest.prediction }}
                         </span>
-                    </div>
-                    <p class="mt-3 mb-2">Phishing Risk Score:</p>
+                    </div>                    <p class="mt-3 mb-2">Phishing Risk Score (Calibrated):</p>
                     <div class="progress confidence-bar">
                         <div class="progress-bar {{ 'bg-success' if result.random_forest.prediction == 'Legitimate' else 'bg-danger' }}"
                             role="progressbar" 
@@ -32,25 +232,95 @@
                         </div>
                     </div>
                     <small class="text-muted">{{ "%.2f"|format(result.random_forest.probability * 100) }}% risk of being phishing</small>
+                    {% if result.random_forest.original_probability > 0 %}
+                    <br><small class="text-muted">Original: {{ "%.2f"|format(result.random_forest.original_probability * 100) }}%</small>
+                    {% endif %}
                 </div>
-            </div>
-            
-            <div class="col-md-6">
+            </div>        </div>
+
+        <!-- 3. Adaptive Model (15% weight) -->
+        {% if result.adaptive.available %}
+        <div class="row mb-3">
+            <div class="col-12">
                 <div class="model-result">
-                    <h5><i class="fas fa-bolt me-2"></i>XGBoost Model</h5>
+                    <h5><i class="fas fa-brain me-2"></i>Adaptive Model <span class="badge bg-info ms-2">25% Weight</span></h5>
                     <div class="mt-3">
-                        <span class="prediction-badge {{ 'legitimate' if result.xgboost.prediction == 'Legitimate' else 'phishing' }}">
-                            {{ result.xgboost.prediction }}
+                        <span class="prediction-badge {{ 'legitimate' if result.adaptive.prediction == 'Legitimate' else 'phishing' }}">
+                            {{ result.adaptive.prediction }}
                         </span>
                     </div>
-                    <p class="mt-3 mb-2">Phishing Risk Score:</p>
+                    <p class="mt-3 mb-2">Intelligence-Enhanced Risk Score:</p>
                     <div class="progress confidence-bar">
-                        <div class="progress-bar {{ 'bg-success' if result.xgboost.prediction == 'Legitimate' else 'bg-danger' }}"
+                        <div class="progress-bar {{ 'bg-success' if result.adaptive.prediction == 'Legitimate' else 'bg-danger' }}"
                             role="progressbar" 
-                             style="width: {{ '%.2f'|format(result.xgboost.probability * 100) }}%">
+                             style="width: {{ '%.2f'|format(result.adaptive.probability * 100) }}%">
                         </div>
                     </div>
-                    <small class="text-muted">{{ "%.2f"|format(result.xgboost.probability * 100) }}% risk of being phishing</small>
+                    <small class="text-muted">{{ "%.2f"|format(result.adaptive.probability * 100) }}% risk (adjusted with threat intelligence)</small>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- 4. Typosquatting Analysis (10% weight) -->
+        {% if result.typosquatting %}
+        <div class="row mt-4">
+            <div class="col-12">
+                <div class="model-result">
+                    <h5><i class="fas fa-spell-check me-2"></i>Typosquatting Analysis <span class="badge bg-warning ms-2">10% Weight</span></h5>
+                    {% if result.typosquatting.is_typosquatting %}
+                        <div class="alert alert-danger" role="alert">
+                            <i class="fas fa-exclamation-triangle me-2"></i>
+                            <strong>Typosquatting Detected!</strong> This domain appears to be impersonating a legitimate site.
+                        </div>
+                        
+                        <div class="mt-3">
+                            <span class="prediction-badge phishing">Suspected Typosquatting</span>
+                        </div>
+                        
+                        <div class="row mt-3">
+                            <div class="col-md-6">
+                                <p><strong>Analyzed Domain:</strong> {{ result.typosquatting.domain }}</p>
+                                {% if result.typosquatting.legitimate_target %}
+                                <p><strong>Likely Target:</strong> {{ result.typosquatting.legitimate_target }}</p>
+                                {% endif %}
+                                {% if result.typosquatting.similarity_score > 0 %}
+                                <p><strong>Similarity Score:</strong> {{ "%.2f"|format(result.typosquatting.similarity_score * 100) }}%</p>
+                                {% endif %}
+                            </div>
+                            <div class="col-md-6">
+                                <p><strong>Detection Confidence:</strong> {{ "%.2f"|format(result.typosquatting.confidence * 100) }}%</p>
+                                <div class="progress">
+                                    <div class="progress-bar bg-warning" role="progressbar" 
+                                         style="width: {{ '%.2f'|format(result.typosquatting.confidence * 100) }}%">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        {% if result.typosquatting.analysis %}
+                        <div class="mt-3">
+                            <h6>Analysis Details:</h6>
+                            <ul class="list-unstyled">
+                                {% for analysis_item in result.typosquatting.analysis %}
+                                <li><i class="fas fa-chevron-right text-warning me-2"></i>{{ analysis_item }}</li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        {% endif %}
+                    {% else %}
+                        <div class="alert alert-success" role="alert">
+                            <i class="fas fa-check-circle me-2"></i>
+                            No typosquatting patterns detected in this domain.
+                        </div>
+                        <div class="mt-3">
+                            <span class="prediction-badge legitimate">No Typosquatting</span>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endif %}                    </div>
                 </div>
             </div>
         </div>
@@ -546,13 +816,90 @@
                     {% endif %}
                 </div>
             </div>
-        </div>
-
-        <div class="text-center mt-4">
+        </div>        <div class="text-center mt-4">
             <a href="/" class="btn btn-primary back-btn">
                 <i class="fas fa-arrow-left me-2"></i>Check Another URL
             </a>
         </div>
-    </div>
+    </div>    
+    <!-- Bootstrap JavaScript for accordion functionality -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>    <script>
+        // Initialize tooltips
+        document.addEventListener('DOMContentLoaded', function() {
+            var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+            var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+                return new bootstrap.Tooltip(tooltipTriggerEl);
+            });
+            
+            console.log('Page loaded, Bootstrap available:', typeof bootstrap !== 'undefined');
+        });
+          // Manual modal control with debugging
+        function showRedFlagModal() {
+            console.log('showRedFlagModal function called');
+            try {
+                var modalElement = document.getElementById('redFlagModal');
+                console.log('Modal element found:', modalElement);
+                
+                if (modalElement) {
+                    // Try Bootstrap method first
+                    if (typeof bootstrap !== 'undefined') {
+                        var myModal = new bootstrap.Modal(modalElement);
+                        console.log('Modal instance created:', myModal);
+                        myModal.show();
+                        console.log('Modal show() called');
+                    } else {
+                        // Fallback: manually show modal
+                        console.log('Bootstrap not available, using fallback');
+                        modalElement.style.display = 'block';
+                        modalElement.classList.add('show');
+                        modalElement.setAttribute('aria-hidden', 'false');
+                        document.body.classList.add('modal-open');
+                        
+                        // Add backdrop
+                        var backdrop = document.createElement('div');
+                        backdrop.className = 'modal-backdrop fade show';
+                        backdrop.id = 'modalBackdrop';
+                        document.body.appendChild(backdrop);
+                    }
+                } else {
+                    console.error('Modal element not found');
+                }
+            } catch (error) {
+                console.error('Error showing modal:', error);
+            }
+        }
+        
+        function hideRedFlagModal() {
+            console.log('hideRedFlagModal function called');
+            try {
+                var modalElement = document.getElementById('redFlagModal');
+                
+                if (typeof bootstrap !== 'undefined') {
+                    var myModal = bootstrap.Modal.getInstance(modalElement);
+                    if (myModal) {
+                        myModal.hide();
+                        console.log('Modal hidden');
+                    } else {
+                        console.log('No modal instance found to hide');
+                    }
+                } else {
+                    // Fallback: manually hide modal
+                    console.log('Using fallback to hide modal');
+                    modalElement.style.display = 'none';
+                    modalElement.classList.remove('show');
+                    modalElement.setAttribute('aria-hidden', 'true');
+                    document.body.classList.remove('modal-open');
+                    
+                    // Remove backdrop
+                    var backdrop = document.getElementById('modalBackdrop');
+                    if (backdrop) {
+                        backdrop.remove();
+                    }
+                }
+            } catch (error) {
+                console.error('Error hiding modal:', error);
+            }
+        }
+    </script>
 </body>
 </html>

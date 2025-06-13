@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, redirect, url_for, flash
 import os
 import joblib
 import sys
@@ -23,13 +23,47 @@ from cryptography.x509.oid import NameOID
 from pysafebrowsing import SafeBrowsing
 import base64
 import hashlib
+import sqlite3
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from model.url_features import URLFeatureExtractor
 from model.random_forest_detector import RandomForestDetector
-from model.xgboost_detector import XGBoostDetector
+from model.enhanced_features import EnhancedURLFeatureExtractor
+from model.ensemble_detector import EnsembleDetector
+from model.adaptive_detector import AdaptiveDetector
+from model.typosquatting_detector import typosquatting_detector
+
+# Simple calibrator implementation
+class ModelCalibrator:
+    def __init__(self):
+        self.rf_bias = -0.3
+        self.rf_scale = 0.8
+    
+    def calibrate_rf_prediction(self, probability):
+        calibrated = (probability + self.rf_bias) * self.rf_scale
+        return float(np.clip(calibrated, 0.01, 0.99))
+    
+    def apply_ensemble_logic(self, rf_prob, typosquatting_analysis=None):
+        # If typosquatting is detected, boost the risk score significantly
+        if typosquatting_analysis and typosquatting_analysis.get('is_typosquatting', False):
+            typo_confidence = typosquatting_analysis.get('confidence', 0.0)
+            typo_boost = 0.4 + (typo_confidence * 0.4)
+            ensemble_prob = max(rf_prob, typo_boost)
+            return min(ensemble_prob, 0.95)
+        
+        # For single model, apply some smoothing
+        if rf_prob < 0.3:
+            return rf_prob * 0.8  # Reduce false positives
+        elif rf_prob > 0.7:
+            return min(rf_prob * 1.1, 0.95)  # Boost high confidence
+        
+        return rf_prob
+
+# Initialize calibrator
+calibrator = ModelCalibrator()
 
 app = Flask(__name__)
+app.secret_key = 'your-secret-key-here'  # Add secret key for flash messages
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
@@ -95,20 +129,74 @@ def load_model(model_class, model_name):
         # If we get here, no model was successfully loaded
         raise FileNotFoundError(f"No valid model file found for {model_name}")
 
+# Initialize enhanced feature extractor and models
+extractor = EnhancedURLFeatureExtractor()
+ensemble_model = None
+adaptive_model = None
+
+# Enhanced model loading with PKL support
+def load_enhanced_model(model_name):
+    """Load enhanced PKL models with thresholds"""
+    models_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'models')
+    
+    try:
+        # Load PKL model
+        model_path = os.path.join(models_dir, f'enhanced_{model_name}_detector.pkl')
+        threshold_path = os.path.join(models_dir, f'enhanced_{model_name}_threshold.pkl')
+        
+        if os.path.exists(model_path) and os.path.exists(threshold_path):
+            with open(model_path, 'rb') as f:
+                model = pickle.load(f)
+            with open(threshold_path, 'rb') as f:
+                threshold = pickle.load(f)
+            
+            logger.info(f"✅ Loaded enhanced {model_name} PKL model (threshold: {threshold})")
+            return model, threshold
+        else:
+            logger.warning(f"Enhanced {model_name} PKL model not found")
+            return None, None
+            
+    except Exception as e:
+        logger.error(f"Failed to load enhanced {model_name} model: {e}")
+        return None, None
+
 # Update model loading
 try:
     logger.info("Loading ML models...")
-    rf_model = load_model(RandomForestDetector, 'randomforest')
-    xgb_model = load_model(XGBoostDetector, 'xgboost')
+      # Try to load new enhanced PKL models first
+    enhanced_rf_model, rf_threshold = load_enhanced_model('random_forest')
+    
+    if enhanced_rf_model and rf_threshold:
+        rf_model = RandomForestDetector()
+        rf_model.model = enhanced_rf_model
+        rf_model.threshold = rf_threshold
+        logger.info(f"✅ Using enhanced RF model with threshold {rf_threshold}")
+    else:
+        # Fallback to old model loading
+        rf_model = load_model(RandomForestDetector, 'randomforest')
+        rf_model.threshold = 0.5  # Default threshold
+        logger.info("Using fallback RF model")
+    
+    # Load ensemble model (fallback to old models)
+    models_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'models')
+    ensemble_path = os.path.join(models_dir, 'ensemble_detector_detector.joblib')
+    if os.path.exists(ensemble_path):
+        ensemble_model = EnsembleDetector()
+        ensemble_model.model = joblib.load(ensemble_path)
+        logger.info("Loaded Ensemble model")
+    
+    # Load adaptive model (fallback to old models)
+    adaptive_path = os.path.join(models_dir, 'adaptive_detector_detector.joblib')
+    if os.path.exists(adaptive_path):
+        adaptive_model = AdaptiveDetector()
+        adaptive_model.model = joblib.load(adaptive_path)
+        logger.info("Loaded Adaptive model")
+        
 except Exception as e:
     logger.error(f"Error loading models: {str(e)}")
     # Continue with default/placeholder models
     rf_model = RandomForestDetector()
-    xgb_model = XGBoostDetector()
     logger.warning("Using placeholder models due to loading errors")
-
-# Initialize feature extractor
-extractor = URLFeatureExtractor()
 
 def get_whois_info(url):
     """Extract WHOIS information for a domain"""
@@ -577,6 +665,82 @@ def check_virustotal(url):
 def home():
     return render_template('index.html')
 
+@app.route('/red-flag', methods=['POST'])
+def flag_url():
+    """Mark a URL as a red flag and save it to the database"""
+    try:
+        url = request.form.get('url')
+        notes = request.form.get('notes', '')
+        
+        if not url:
+            flash('No URL provided', 'error')
+            return redirect(url_for('home'))
+        
+        # Get user's IP address
+        user_ip = request.environ.get('HTTP_X_FORWARDED_FOR', request.environ.get('REMOTE_ADDR', 'Unknown'))
+        
+        db_path = os.path.join(os.path.dirname(__file__), 'redflags.db')
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Try to insert the URL (will fail if duplicate due to UNIQUE constraint)
+        try:
+            cursor.execute('''
+                INSERT INTO red_flags (url, user_ip, notes)
+                VALUES (?, ?, ?)
+            ''', (url, user_ip, notes))
+            conn.commit()
+            flash(f'URL "{url}" has been flagged as suspicious!', 'success')
+            logger.info(f"URL flagged: {url} by IP: {user_ip}")
+        except sqlite3.IntegrityError:
+            # URL already exists in database
+            flash(f'URL "{url}" is already flagged!', 'warning')
+            logger.info(f"Attempted to flag already flagged URL: {url}")
+        
+        conn.close()
+        
+    except Exception as e:
+        logger.error(f"Error flagging URL: {str(e)}")
+        flash('Error occurred while flagging URL', 'error')
+    
+    # Redirect back to the previous page or home
+    return redirect(request.referrer or url_for('home'))
+
+@app.route('/red-flags')
+def view_red_flags():
+    """Display all red-flagged URLs"""
+    try:
+        db_path = os.path.join(os.path.dirname(__file__), 'redflags.db')
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Get all flagged URLs ordered by most recent first
+        cursor.execute('''
+            SELECT url, flagged_at, user_ip, notes
+            FROM red_flags
+            ORDER BY flagged_at DESC
+        ''')
+        
+        flagged_urls = cursor.fetchall()
+        conn.close()
+        
+        # Convert to list of dictionaries for easier template access
+        flagged_data = []
+        for row in flagged_urls:
+            flagged_data.append({
+                'url': row[0],
+                'flagged_at': row[1],
+                'user_ip': row[2],
+                'notes': row[3] or 'No notes provided'
+            })
+        
+        return render_template('red_flags.html', flagged_urls=flagged_data)
+        
+    except Exception as e:
+        logger.error(f"Error retrieving red flags: {str(e)}")
+        flash('Error occurred while retrieving red flags', 'error')
+        return redirect(url_for('home'))
+
 @app.route('/predict', methods=['POST'])
 def predict():
     try:
@@ -584,58 +748,120 @@ def predict():
         if not url:
             return jsonify({'error': 'No URL provided'}), 400
 
-        # Extract features and reshape for prediction
-        features = extractor.extract_features(url)
-        features = features.reshape(1, -1)
-        
-        logger.debug(f"Extracted features shape: {features.shape}")
-        
-        # Get predictions from both models
+        # Perform typosquatting analysis first
+        typosquatting_analysis = typosquatting_detector.analyze_domain(url)
+        logger.debug(f"Typosquatting analysis: {typosquatting_analysis}")
+
+        # Extract enhanced features
         try:
-            rf_pred, rf_prob = rf_model.predict(features)
-            logger.debug(f"RF prediction: {rf_pred}, probability: {rf_prob}")
+            enhanced_features = extractor.extract_features(url)
+            enhanced_features = enhanced_features.reshape(1, -1)
+            logger.debug(f"Enhanced features shape: {enhanced_features.shape}")
+            
+            # Log feature names and values for debugging
+            if hasattr(extractor, 'feature_names') and len(extractor.feature_names) >= 8:
+                logger.debug("Enhanced features (first 8):")
+                for i in range(min(8, len(extractor.feature_names))):
+                    logger.debug(f"  {extractor.feature_names[i]}: {enhanced_features[0][i]}")
+        except Exception as e:
+            logger.error(f"Error extracting enhanced features: {str(e)}")
+            # Fall back to basic features
+            from model.url_features import URLFeatureExtractor
+            basic_extractor = URLFeatureExtractor()
+            enhanced_features = basic_extractor.extract_features(url)
+            enhanced_features = enhanced_features.reshape(1, -1)
+            
+            # Log basic feature names and values
+            if hasattr(basic_extractor, 'feature_names'):
+                logger.debug("Basic features:")
+                for i in range(len(basic_extractor.feature_names)):
+                    logger.debug(f"  {basic_extractor.feature_names[i]}: {enhanced_features[0][i]}")
+          # Use enhanced features for all models since they were trained on enhanced features
+        logger.debug(f"Enhanced features shape: {enhanced_features.shape}")
+        logger.debug(f"Feature names count: {len(extractor.feature_names) if hasattr(extractor, 'feature_names') else 'Unknown'}")
+          # Make predictions using enhanced features
+        try:
+            rf_pred, rf_prob = rf_model.predict(enhanced_features)
+            # Apply calibration to improve reliability
+            rf_prob_calibrated = calibrator.calibrate_rf_prediction(rf_prob)
+            rf_pred_calibrated = 1 if rf_prob_calibrated > 0.5 else 0
+            logger.debug(f"RF prediction: {rf_pred}, probability: {rf_prob} -> calibrated: {rf_pred_calibrated}, {rf_prob_calibrated}")
         except Exception as e:
             logger.error(f"Error with RandomForest prediction: {str(e)}")
-            rf_pred, rf_prob = 0, 0.0  # Default to legitimate if error
+            rf_pred_calibrated, rf_prob_calibrated = 0, 0.0
         
-        try:
-            xgb_pred, xgb_prob = xgb_model.predict(features)
-            logger.debug(f"XGB prediction: {xgb_pred}, probability: {xgb_prob}")
-        except Exception as e:
-            logger.error(f"Error with XGBoost prediction: {str(e)}")
-            xgb_pred, xgb_prob = 0, 0.0  # Default to legitimate if error
-
-        # Get WHOIS information
+        # Get predictions from enhanced models
+        ensemble_pred, ensemble_prob = 0, 0.0
+        adaptive_pred, adaptive_prob = 0, 0.0
+        
+        if ensemble_model and ensemble_model.model:
+            try:
+                ensemble_pred, ensemble_prob = ensemble_model.predict(enhanced_features)
+                logger.debug(f"Ensemble prediction: {ensemble_pred}, probability: {ensemble_prob}")
+            except Exception as e:
+                logger.error(f"Error with Ensemble prediction: {str(e)}")
+          # Collect intelligence data for adaptive model
         whois_info = get_whois_info(url)
-        
-        # Get IP and geolocation information
         ip_info = get_ip_info(url)
-        
-        # Get SSL certificate information if the URL is https
-        ssl_info = None
-        if url.startswith('https://'):
-            ssl_info = get_ssl_info(url)
-        else:
-            ssl_info = {
-                'success': False,
-                'error': 'URL is not using HTTPS protocol'
-            }
-        
-        # Check Google Safe Browsing API
+        ssl_info = get_ssl_info(url) if url.startswith('https://') else {'success': False}
         safebrowsing_info = check_google_safebrowsing(url)
-        
-        # Check VirusTotal API
         virustotal_info = check_virustotal(url)
+        
+        intelligence_data = {
+            'whois': whois_info,
+            'ip_info': ip_info,
+            'ssl_info': ssl_info,
+            'safebrowsing': safebrowsing_info,
+            'virustotal': virustotal_info
+        }
+        
+        # Get adaptive prediction with intelligence
+        if adaptive_model and adaptive_model.model:
+            try:
+                adaptive_pred, adaptive_prob = adaptive_model.predict_with_intelligence(
+                    enhanced_features, intelligence_data
+                )
+                logger.debug(f"Adaptive prediction: {adaptive_pred}, probability: {adaptive_prob}")
+            except Exception as e:                logger.error(f"Error with Adaptive prediction: {str(e)}")
+        
+        # Create ensemble prediction using calibrated results with typosquatting analysis
+        rf_prob_for_ensemble = rf_prob_calibrated if 'rf_prob_calibrated' in locals() else 0.2
+        ensemble_prob_combined = calibrator.apply_ensemble_logic(
+            rf_prob_for_ensemble,
+            typosquatting_analysis
+        )
+        ensemble_pred_combined = 1 if ensemble_prob_combined > 0.5 else 0
+          # Calculate Combined ML Detection Result (ML models only)
+        ml_combined_prob = calculate_combined_ml_result(
+            rf_prob_calibrated if 'rf_prob_calibrated' in locals() else 0.0,
+            ensemble_prob_combined,
+            adaptive_prob,
+            typosquatting_analysis
+        )
+        ml_combined_prediction = 'Phishing' if ml_combined_prob > 0.5 else 'Legitimate'
         
         result = {
             'url': url,
-            'random_forest': {
-                'prediction': 'Phishing' if rf_pred == 1 else 'Legitimate',
-                'probability': rf_prob
+            'ml_combined': {
+                'prediction': ml_combined_prediction,
+                'probability': ml_combined_prob,
+                'confidence': abs(ml_combined_prob - 0.5) * 2,  # 0-1 scale confidence
+                'risk_level': get_risk_level(ml_combined_prob)
+            },            'random_forest': {
+                'prediction': 'Phishing' if locals().get('rf_pred_calibrated', 0) == 1 else 'Legitimate',
+                'probability': locals().get('rf_prob_calibrated', 0.0),
+                'original_probability': locals().get('rf_prob', 0.0)
             },
-            'xgboost': {
-                'prediction': 'Phishing' if xgb_pred == 1 else 'Legitimate',
-                'probability': xgb_prob
+            'ensemble': {
+                'prediction': 'Phishing' if ensemble_pred_combined == 1 else 'Legitimate',
+                'probability': ensemble_prob_combined,
+                'available': True
+            },
+            'typosquatting': typosquatting_analysis,
+            'adaptive': {
+                'prediction': 'Phishing' if adaptive_pred == 1 else 'Legitimate',
+                'probability': adaptive_prob,
+                'available': adaptive_model is not None and adaptive_model.model is not None
             },
             'whois': whois_info,
             'ip_info': ip_info,
@@ -649,45 +875,165 @@ def predict():
     except Exception as e:
         logger.exception("Error during prediction")
         return jsonify({'error': str(e)}), 500
+        return jsonify({'error': str(e)}), 500
 
-def start_ngrok(port):
-    """Start ngrok and return the public URL"""
-    # Import here to avoid import errors if pyngrok isn't available
-    from pyngrok import ngrok
-    public_url = ngrok.connect(port).public_url
-    logger.info(f"* ngrok tunnel available at: {public_url}")
-    return public_url
+# Balanced Phishing Detector class for new models
+class BalancedPhishingDetector:
+    def __init__(self, model, threshold=0.75):
+        self.model = model
+        self.threshold = threshold
+        self.feature_extractor = EnhancedURLFeatureExtractor()
+    
+    def predict(self, X):
+        """Predict with balanced approach"""
+        if len(X.shape) == 1:
+            X = X.reshape(1, -1)
+        
+        proba = self.model.predict_proba(X)
+        pred_proba = proba[:, 1] if proba.shape[1] > 1 else proba[:, 0]
+        
+        # Use threshold to balance false positives and false negatives
+        predictions = (pred_proba >= self.threshold).astype(int)
+        
+        return predictions[0] if len(predictions) == 1 else predictions, pred_proba[0] if len(pred_proba) == 1 else pred_proba
+    
+    def train(self, X_train, y_train, X_val=None, y_val=None):
+        """Train the underlying model"""
+        self.model.fit(X_train, y_train)
+
+def calculate_combined_ml_result(rf_prob, ensemble_prob, adaptive_prob, typosquatting_analysis):
+    """
+    Calculate a combined ML detection result using weighted average of ML models only
+    
+    Args:
+        rf_prob: Random Forest probability
+        ensemble_prob: Ensemble probability
+        adaptive_prob: Adaptive model probability
+        typosquatting_analysis: Typosquatting analysis results
+    
+    Returns:
+        Combined probability score (0.0 to 1.0)
+    """
+    # Updated weights for ML models only
+    weights = {
+        'ensemble': 0.50,          # 50% - Primary model (highest weight)
+        'random_forest': 0.30,     # 30% - Secondary model
+        'adaptive': 0.12,          # 12% - Intelligence integration
+        'typosquatting': 0.08      # 8% - Domain analysis
+    }
+    
+    # Calculate typosquatting probability
+    typo_prob = 0.0
+    if typosquatting_analysis and typosquatting_analysis.get('is_typosquatting', False):
+        # Convert typosquatting confidence to probability
+        confidence = typosquatting_analysis.get('confidence', 0.0)
+        typo_prob = min(0.8 + (confidence * 0.2), 0.95)  # Scale to 80-95% range
+    
+    # Calculate weighted average
+    combined_score = (
+        ensemble_prob * weights['ensemble'] +
+        rf_prob * weights['random_forest'] +
+        adaptive_prob * weights['adaptive'] +
+        typo_prob * weights['typosquatting']
+    )
+    
+    # Apply additional logic for high-confidence cases
+    high_confidence_threshold = 0.8
+    
+    # If Ensemble model has very high confidence in phishing, boost the score
+    if ensemble_prob > high_confidence_threshold:
+        boost_factor = 1.15  # Moderate boost for ensemble
+        combined_score = min(combined_score * boost_factor, 0.95)
+        logger.debug(f"Ensemble high confidence boost applied: {ensemble_prob:.2f}")
+    # If Random Forest has very high confidence but ensemble is lower, small boost
+    elif rf_prob > high_confidence_threshold and ensemble_prob < 0.6:
+        boost_factor = 1.05
+        combined_score = min(combined_score * boost_factor, 0.95)
+        logger.debug(f"Random Forest high confidence boost applied: {rf_prob:.2f}")
+    
+    # If both main models agree on legitimate (both < 0.3), reduce score more aggressively
+    if rf_prob < 0.3 and ensemble_prob < 0.3:
+        combined_score *= 0.8
+        logger.debug(f"Both models indicate low threat, score reduced")
+    
+    # Log the combination for debugging
+    logger.debug(f"ML Score combination - Ensemble: {ensemble_prob:.2f} (50%), RF: {rf_prob:.2f} (30%), "
+                f"Adaptive: {adaptive_prob:.2f} (12%), Typo: {typo_prob:.2f} (8%), Final: {combined_score:.2f}")
+    
+    # Ensure score is within bounds
+    return max(0.0, min(1.0, combined_score))
+
+def get_risk_level(probability):
+    """
+    Convert probability to human-readable risk level
+    
+    Args:
+        probability: Phishing probability (0.0 to 1.0)
+    
+    Returns:
+        Risk level string
+    """
+    if probability < 0.2:
+        return 'Very Low Risk'
+    elif probability < 0.35:
+        return 'Low Risk'
+    elif probability < 0.5:
+        return 'Suspicious'  # New level: 35% to 50%
+    elif probability < 0.65:
+        return 'Medium Risk'  # Now 50% to 65%
+    elif probability < 0.8:
+        return 'High Risk'
+    else:
+        return 'Very High Risk'
+
+# Database initialization
+def init_database():
+    """Initialize the SQLite database for red-flagged URLs"""
+    db_path = os.path.join(os.path.dirname(__file__), 'redflags.db')
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Create red_flags table if it doesn't exist
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS red_flags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                url TEXT UNIQUE NOT NULL,
+                flagged_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                user_ip TEXT,
+                notes TEXT
+            )
+        ''')
+        
+        conn.commit()
+        conn.close()
+        logger.info("Database initialized successfully")
+        return True
+    except Exception as e:
+        logger.error(f"Error initializing database: {str(e)}")
+        return False
+
+# Initialize database on app startup
+init_database()
+
+@app.route('/test-modal')
+def test_modal():
+    """Test route for modal functionality"""
+    return render_template('modal_test.html')
 
 if __name__ == '__main__':
-    # Check if this is a production environment (Railway sets PORT env var)
+    # Check if this is a production environment
     is_production = os.environ.get('RAILWAY_ENVIRONMENT') == 'production'
     
     # If we're in production, disable debug mode
     debug_mode = not is_production
     
-    # Check if ngrok should be used (from environment variable)
-    use_ngrok = os.environ.get('USE_NGROK', 'False').lower() == 'true'
+    # Get port from environment
     port = int(os.environ.get('PORT', 5000))
     
-    # Set up a public URL using ngrok (only in development)
-    public_url = None
+    # Run the Flask app directly
+    logger.info(f"Starting Flask application on port {port}")
+    if not is_production:
+        logger.info(f"Application available at: http://localhost:{port}")
     
-    if use_ngrok and not is_production:
-        try:
-            # Only import pyngrok if needed
-            from pyngrok import ngrok
-            
-            # Set up ngrok
-            ngrok_auth_token = os.environ.get('NGROK_AUTH_TOKEN')
-            if ngrok_auth_token:
-                ngrok.set_auth_token(ngrok_auth_token)
-            
-            # Start ngrok
-            public_url = start_ngrok(port)
-            print(f" * Ngrok tunnel URL: {public_url}")
-        except Exception as e:
-            logger.error(f"Could not start ngrok: {str(e)}")
-            logger.error("Running without ngrok")
-    
-    # Run the Flask app
     app.run(host='0.0.0.0', port=port, debug=debug_mode)

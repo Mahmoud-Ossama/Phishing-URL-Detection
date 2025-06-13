@@ -4,10 +4,10 @@ numpy>=1.21.0
 pandas>=1.3.0
 xgboost>=1.7.0
 joblib>=1.1.0
+lightgbm>=3.3.0
 
 # Web application
 flask>=2.0.0
-pyngrok>=5.1.0
 
 # URL parsing and analysis
 tld>=0.12.6

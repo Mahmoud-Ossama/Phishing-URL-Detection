@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Red Flag URLs - Phishing Detection</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
+    <style>
+        .red-flag-header {
+            background: linear-gradient(135deg, #dc3545, #c82333);
+            color: white;
+            padding: 2rem 0;
+            margin-bottom: 2rem;
+        }
+        .flag-item {
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            background: #fff;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .flag-item:hover {
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+            transform: translateY(-1px);
+            transition: all 0.2s ease;
+        }
+        .url-text {
+            word-break: break-all;
+            color: #0d6efd;
+            text-decoration: none;
+        }
+        .url-text:hover {
+            text-decoration: underline;
+        }
+        .flag-meta {
+            font-size: 0.9em;
+            color: #6c757d;
+        }
+        .back-btn {
+            margin-bottom: 1rem;
+        }
+        .empty-state {
+            text-align: center;
+            padding: 3rem;
+            color: #6c757d;
+        }
+        .empty-state i {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+            opacity: 0.5;
+        }
+    </style>
+</head>
+<body>
+    <div class="red-flag-header">
+        <div class="container">
+            <h1 class="text-center mb-0">
+                <i class="fas fa-flag me-3"></i>
+                Red Flag URLs
+            </h1>
+            <p class="text-center mb-0 mt-2">User-flagged suspicious URLs</p>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- Flash Messages -->
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div class="mb-4">
+                    {% for category, message in messages %}
+                        <div class="alert alert-{{ 'danger' if category == 'error' else 'warning' if category == 'warning' else 'success' }} alert-dismissible fade show">
+                            {{ message }}
+                            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+
+        <!-- Back Button -->
+        <div class="back-btn">
+            <a href="{{ url_for('home') }}" class="btn btn-outline-primary">
+                <i class="fas fa-arrow-left me-2"></i>
+                Back to Analysis
+            </a>
+        </div>
+
+        <!-- Statistics -->
+        <div class="row mb-4">
+            <div class="col-md-4">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h3 class="text-danger">{{ flagged_urls|length }}</h3>
+                        <p class="card-text">Total Flagged URLs</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h3 class="text-warning">{{ flagged_urls|length if flagged_urls else 0 }}</h3>
+                        <p class="card-text">Suspicious Patterns</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h3 class="text-info">Community</h3>
+                        <p class="card-text">Crowdsourced Security</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Flagged URLs List -->
+        {% if flagged_urls %}
+            <div class="row">
+                <div class="col-12">
+                    <h3 class="mb-4">
+                        <i class="fas fa-list me-2"></i>
+                        Flagged URLs ({{ flagged_urls|length }})
+                    </h3>
+                    
+                    {% for flag in flagged_urls %}
+                    <div class="flag-item">
+                        <div class="row align-items-center">
+                            <div class="col-md-8">
+                                <div class="d-flex align-items-start">
+                                    <i class="fas fa-flag text-danger me-3 mt-1"></i>
+                                    <div>
+                                        <h6 class="mb-2">
+                                            <a href="{{ flag.url }}" target="_blank" class="url-text">{{ flag.url }}</a>
+                                            <a href="{{ flag.url }}" target="_blank" class="ms-2">
+                                                <i class="fas fa-external-link-alt text-muted" style="font-size: 0.8em;"></i>
+                                            </a>
+                                        </h6>
+                                        <p class="mb-1"><strong>Notes:</strong> {{ flag.notes }}</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4 text-md-end">
+                                <div class="flag-meta">
+                                    <div><i class="fas fa-clock me-1"></i> {{ flag.flagged_at }}</div>
+                                    <div><i class="fas fa-map-marker-alt me-1"></i> IP: {{ flag.user_ip }}</div>
+                                </div>
+                                
+                                <!-- Quick Re-analyze Button -->
+                                <form method="POST" action="{{ url_for('predict') }}" class="mt-2">
+                                    <input type="hidden" name="url" value="{{ flag.url }}">
+                                    <button type="submit" class="btn btn-sm btn-outline-primary">
+                                        <i class="fas fa-search me-1"></i> Re-analyze
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        {% else %}
+            <div class="empty-state">
+                <i class="fas fa-flag"></i>
+                <h3>No Red Flags Yet</h3>
+                <p>No URLs have been flagged as suspicious yet.<br>
+                   Start by analyzing URLs and flagging any suspicious ones!</p>
+                <a href="{{ url_for('home') }}" class="btn btn-primary">
+                    <i class="fas fa-search me-2"></i>
+                    Analyze a URL
+                </a>
+            </div>
+        {% endif %}
+
+        <!-- Help Section -->
+        <div class="mt-5 pt-4 border-top">
+            <div class="row">
+                <div class="col-md-6">
+                    <h5><i class="fas fa-info-circle me-2 text-info"></i>What are Red Flags?</h5>
+                    <p class="text-muted">Red Flags are URLs that users have manually marked as suspicious or potentially harmful. This crowdsourced approach helps build a community database of threats.</p>
+                </div>
+                <div class="col-md-6">
+                    <h5><i class="fas fa-shield-alt me-2 text-success"></i>How to Use</h5>
+                    <p class="text-muted">After analyzing a URL, if you believe it's suspicious despite the analysis results, you can flag it as a Red Flag. This helps other users and improves our detection capabilities.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
